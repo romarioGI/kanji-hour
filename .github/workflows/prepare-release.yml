@@ -1,0 +1,184 @@
+name: Prepare release
+run-name: Prepare APK candidate · ${{ github.sha }}
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require trunk and a new candidate
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/trunk || "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
+            echo '::error::Start a new Prepare release run from trunk. Do not re-run a candidate.'
+            exit 1
+          fi
+      - name: Require original signing secrets
+        env:
+          KEY: ${{ secrets.KANJI_SIGNING_KEY_B64 }}
+          PASSWORD: ${{ secrets.KANJI_SIGNING_PASSWORD }}
+        run: |
+          if [[ -z "$KEY" || -z "$PASSWORD" ]]; then
+            echo '::error::Configure KANJI_SIGNING_KEY_B64 and KANJI_SIGNING_PASSWORD in repository Actions secrets. See docs/RELEASING.md. No new key will be generated.'
+            exit 1
+          fi
+
+  build:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Run checks
+        run: python3 tools/check.py
+      - name: Build fixed candidate
+        run: python3 tools/release_ci.py prepare --directory build/unsigned
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-${{ github.run_id }}
+          path: |
+            build/unsigned/kanji-hour.apk
+            build/unsigned/build-info.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate-url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: unsigned-${{ github.run_id }}
+          path: build/unsigned
+      - name: Prepare signing tools
+        run: python3 tools/build_native.py --bootstrap --check --sdk "$RUNNER_TEMP/kanji-sdk"
+      - name: Sign with original certificate
+        env:
+          KANJI_SIGNING_KEY_B64: ${{ secrets.KANJI_SIGNING_KEY_B64 }}
+          KANJI_SIGNING_PASSWORD: ${{ secrets.KANJI_SIGNING_PASSWORD }}
+        run: python3 tools/release_ci.py sign
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload
+        with:
+          name: release-candidate-${{ github.run_id }}
+          path: |
+            build/candidate/kanji-hour.apk
+            build/candidate/kanji-hour.apk.sha256
+            build/candidate/build-info.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  smoke:
+    name: Install and launch · API ${{ matrix.api }}
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34, 35]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate-${{ github.run_id }}
+          path: build/candidate
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 tools/smoke_apk.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: smoke-api-${{ matrix.api }}-${{ github.run_id }}
+          path: build/smoke/
+          if-no-files-found: ignore
+          retention-days: 3
+
+  ready:
+    needs: [build, sign, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate-${{ github.run_id }}
+          path: build/candidate
+      - name: Mark candidate ready for phone acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_URL: ${{ needs.sign.outputs.candidate-url }}
+        run: python3 tools/release_ci.py ready

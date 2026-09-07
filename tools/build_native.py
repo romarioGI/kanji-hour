@@ -148,7 +148,9 @@ def zip_add(archive, name, data, compression=zipfile.ZIP_DEFLATED):
     archive.writestr(info, data)
 
 
-def build(sdk, output, check_only):
+def build(sdk, output, check_only, unsigned_only=False, version_code=None):
+    if version_code is not None and not 1 <= version_code <= 2100000000:
+        raise RuntimeError("versionCode must be between 1 and 2100000000")
     java, javac, keytool = find_java()
     build_tools = sdk / "build-tools" / "35.0.1"
     android_jar = sdk / "platforms" / "android-35" / "android.jar"
@@ -180,6 +182,8 @@ def build(sdk, output, check_only):
     link = [aapt2, "link", "-o", resources_apk, "--manifest", manifest,
             "-I", android_jar, "--java", work / "generated", "--min-sdk-version", "34",
             "--target-sdk-version", "34", "--auto-add-overlay", "-R", resources_zip]
+    if version_code is not None:
+        link += ["--version-code", str(version_code)]
     if (source / "assets").is_dir():
         link += ["-A", source / "assets"]
     run(link, "2/6 Linking Android package and generating R.java")
@@ -210,8 +214,14 @@ def build(sdk, output, check_only):
             zip_add(destination, dex.name, dex.read_bytes())
     aligned = work / "aligned.apk"
     run([zipalign, "-f", "-P", "16", "4", unsigned, aligned], "5/6 Aligning APK")
-    keystore, password = ensure_key(keytool)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if unsigned_only:
+        # CI signs in a separate job; no key is loaded or generated here.
+        shutil.copyfile(aligned, output)
+        run([zipalign, "-c", "-P", "16", "4", output], "Verifying unsigned package alignment")
+        print("Built unsigned APK: " + str(output))
+        return
+    keystore, password = ensure_key(keytool)
     run([java, "-jar", signer_jar, "sign", "--ks", keystore, "--ks-key-alias", "kanji-hour",
          "--ks-pass", "file:" + str(password),
          "--v4-signing-enabled", "false", "--out", output, aligned], "6/6 Signing APK")
@@ -229,12 +239,14 @@ def main():
     parser.add_argument("--bootstrap", action="store_true", help="Install pinned official SDK archives if missing (Linux x86_64)")
     parser.add_argument("--check", action="store_true", help="Check toolchain only; do not compile the app or create a key")
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "kanji-hour-poco.apk")
+    parser.add_argument("--unsigned", action="store_true", help="Build aligned APK without loading or generating a key")
+    parser.add_argument("--version-code", type=int, help="Override manifest versionCode for CI candidates")
     args = parser.parse_args()
     sdk = args.sdk.expanduser().resolve()
     try:
         if args.bootstrap:
             bootstrap_sdk(sdk)
-        build(sdk, args.output.expanduser().resolve(), args.check)
+        build(sdk, args.output.expanduser().resolve(), args.check, args.unsigned, args.version_code)
     except (RuntimeError, OSError, subprocess.CalledProcessError) as exc:
         print("Build failed: " + str(exc), file=sys.stderr)
         return 1
