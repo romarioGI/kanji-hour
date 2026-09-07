@@ -1,0 +1,47 @@
+# Local outputs and downloaded tools
+/build/
+/dist/
+/build-tools/
+/android-sdk/
+/.gradle/
+/.idea/
+/local.properties
+*.iml
+__pycache__/
+*.py[cod]
+*.class
+*.dex
+*.jar
+*.aar
+*.apk
+*.ap_
+*.aab
+*.idsig
+*.zip
+*.bundle
+*.tar
+*.tar.gz
+
+# Signing material and credentials; keep only the public instructions
+/signing/*
+!/signing/README.md
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.pem
+*.key
+.env
+.env.*
+*-password.txt
+
+# Personal screenshots / wallpaper inputs are never project assets
+/upload/
+/screenshots/
+/wallpapers/
+
+# Editor / OS files
+*~
+*.swp
+.DS_Store
+Thumbs.db

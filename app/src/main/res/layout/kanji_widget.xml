@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:minHeight="72dp"
+    android:padding="8dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@android:color/transparent">
+
+    <TextView
+        android:id="@+id/widget_glyph"
+        android:layout_width="72dp"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif"
+        android:includeFontPadding="false"
+        android:gravity="center"
+        android:singleLine="true"
+        android:text="学"
+        android:textLocale="ja"
+        android:textColor="#262B30"
+        android:textSize="54sp"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="8dp"
+        android:orientation="vertical"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_on"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="ОН  ガク"
+            android:textLocale="ja"
+            android:textColor="#3E454B"
+            android:textSize="13sp"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:id="@+id/widget_kun"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:includeFontPadding="false"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="КУН  まなぶ"
+            android:textLocale="ja"
+            android:textColor="#3E454B"
+            android:textSize="13sp"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:id="@+id/widget_meaning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:includeFontPadding="false"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="учёба, знание"
+            android:textColor="#262B30"
+            android:textSize="14sp"
+            android:importantForAccessibility="no" />
+    </LinearLayout>
+</LinearLayout>
