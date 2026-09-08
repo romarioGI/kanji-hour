@@ -1,53 +1,46 @@
 name: Review release
-run-name: ${{ inputs.decision }} candidate ${{ inputs.candidate_run_id }}
+run-name: Review APK candidate ${{ github.event.workflow_run.id }}
 
 'on':
-  workflow_dispatch:
-    inputs:
-      candidate_run_id:
-        description: 'Номер запуска Prepare release (из Summary)'
-        required: true
-        type: string
-      decision:
-        description: 'Результат проверки на телефоне'
-        required: true
-        type: choice
-        default: reject
-        options: [reject, approve]
-      tested_sha256:
-        description: 'SHA-256 проверенного APK; обязателен для approve'
-        required: false
-        type: string
-      phone_report:
-        description: 'Модель телефона, Android/HyperOS и результат или причина отказа'
-        required: true
-        type: string
+  workflow_run:
+    workflows: [Prepare release]
+    types: [completed]
+    branches: [trunk]
 
 permissions: {}
-
-concurrency:
-  group: release-review-and-publish
-  cancel-in-progress: false
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  review:
+  acceptance:
+    if: >-
+      github.ref == 'refs/heads/trunk' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.repository.full_name == github.repository
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Publication still requires a matching native approval, APK checksum and phone report.'
+
+  publish:
+    needs: acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Serialize publication only; waiting for a phone must not block other candidates.
+    concurrency:
+      group: release-review-and-publish
+      cancel-in-progress: false
     permissions:
       actions: read
       contents: write
       statuses: write
     steps:
-      - name: Require trunk
-        run: |
-          if [[ "$GITHUB_REF" != refs/heads/trunk ]]; then
-            echo '::error::Run Review release from trunk.'
-            exit 1
-          fi
+      # workflow_run executes trusted default-branch code, never candidate/PR code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -55,18 +48,46 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-      - name: Record decision and publish only an accepted candidate
+      - name: Verify native approval and publish exactly the tested APK
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-          DECISION: ${{ inputs.decision }}
-          TESTED_SHA256: ${{ inputs.tested_sha256 }}
-          PHONE_REPORT: ${{ inputs.phone_report }}
         run: python3 tools/release_ci.py review
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: phone-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/review/review.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  rejected:
+    needs: [acceptance, publish]
+    if: >-
+      always() && github.ref == 'refs/heads/trunk' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      needs.acceptance.result != 'skipped' && needs.publish.result != 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Record only an explicit native Reject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_ci.py reject
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: phone-review-rejected-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/review/review.json
           if-no-files-found: ignore
           retention-days: 30
