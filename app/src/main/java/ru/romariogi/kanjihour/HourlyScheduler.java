@@ -90,7 +90,10 @@ public final class HourlyScheduler {
                     .remove("schedule_error").apply();
         } catch (RuntimeException failure) {
             Log.w(TAG, "Could not schedule hourly alarm", failure);
-            Config.prefs(app).edit().remove("next_update_at").putString("schedule_mode", "error")
+            // A failed registration does not consume the previous deadline. Keep it
+            // as a retry hint; otherwise a transient failure can postpone a due alarm.
+            // Explicit disable above still removes it after successful cancellation.
+            Config.prefs(app).edit().putString("schedule_mode", "error")
                     .putString("schedule_error", "Не удалось назначить почасовое обновление.").apply();
         }
     }
