@@ -1,0 +1,82 @@
+# Temporary evidence for PR #32. Remove this file before merging.
+name: Verify smoke isolation
+'on':
+  pull_request:
+    branches: [trunk]
+    paths:
+      - tools/smoke_apk.py
+      - .github/workflows/prepare-release.yml
+      - .github/workflows/verify-smoke-isolation.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: verify-smoke-isolation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    if: >-
+      github.head_ref == 'fix/isolate-smoke-install-scenarios' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34, 35]
+        scenario: [fresh, upgrade]
+        trial: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-candidate-34285165453
+          run-id: 34285165453
+          github-token: ${{ github.token }}
+          path: build/candidate
+      - name: Verify exact APK from failed run, without rebuilding or signing
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          info = json.loads(Path('build/candidate/build-info.json').read_text())
+          expected = '5e944fd90260b641bb1c64eb7b7dccf541cb9903944afb332b47704aa21a55a7'
+          assert info['run_id'] == 34285165453
+          assert info['commit'] == 'b66912b7f46918227e2a719a2e0098ef61b4c681'
+          assert hashlib.sha256(Path('build/candidate/kanji-hour.apk').read_bytes()).hexdigest() == expected
+          assert info['apk_sha256'] == expected
+          print('Exact candidate APK:', expected)
+          PY
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 tools/smoke_apk.py --scenario ${{ matrix.scenario }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: isolation-${{ matrix.scenario }}-api-${{ matrix.api }}-trial-${{ matrix.trial }}
+          path: build/smoke/
+          if-no-files-found: error
+          retention-days: 3

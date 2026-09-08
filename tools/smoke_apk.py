@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/launch the exact candidate; also exercise replacement of the last release."""
+"""Run one install scenario on a clean emulator using the exact candidate bytes."""
 import argparse
 import json
 import os
@@ -24,7 +24,7 @@ def launch():
     time.sleep(3)
     require(adb("shell", "pidof", PACKAGE).strip(), "App exited after launch")
     crashes = adb("logcat", "-d", "-b", "crash")
-    require("Process: " + PACKAGE not in crashes, "App crash recorded in logcat")
+    require("Process: " + PACKAGE not in crashes, "App crash recorded in logcat: " + crashes)
 
 
 def install(apk):
@@ -49,42 +49,70 @@ def previous(repo, directory):
     return info
 
 
+def installed_version(info):
+    require(f"versionCode={info['version_code']} " in adb("shell", "dumpsys", "package", PACKAGE),
+            "Installed versionCode differs from expected APK")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path("build/candidate"))
+    parser.add_argument("--scenario", choices=("fresh", "upgrade"), required=True,
+                        help="Each scenario needs its own clean emulator; never uninstall between them")
     args = parser.parse_args()
     LOGS.mkdir(parents=True, exist_ok=True)
-    info = json.loads((args.directory / "build-info.json").read_text())
-    require(digest((args.directory / APK).read_bytes()) == info["apk_sha256"], "Candidate checksum mismatch")
-    report = {"api_level": adb("shell", "getprop", "ro.build.version.sdk").strip(),
+    report = {"scenario": args.scenario, "api_level": None, "stage": "candidate validation",
               "fresh_install": False, "upgrade": "not run"}
     try:
-        adb("logcat", "-c")
-        install(args.directory / APK)
-        require(f"versionCode={info['version_code']} " in adb("shell", "dumpsys", "package", PACKAGE),
-                "Installed versionCode differs from candidate")
-        report["fresh_install"] = True
-        old_dir = Path("build/previous")
-        old = previous(os.environ["GITHUB_REPOSITORY"], old_dir)
-        if old is None:
-            report["upgrade"] = "skipped: no previous published release"
-            print("Upgrade check skipped: this repository has no published release yet.")
-        else:
-            require(old["version_code"] < info["version_code"], "Candidate is not newer than the latest release")
-            adb("uninstall", PACKAGE)
-            adb("logcat", "-c")
-            install(old_dir / APK)
-            # No uninstall or data clear between old and new versions.
+        info = json.loads((args.directory / "build-info.json").read_text())
+        require(digest((args.directory / APK).read_bytes()) == info["apk_sha256"], "Candidate checksum mismatch")
+        report["candidate_sha256"] = info["apk_sha256"]
+        report["api_level"] = adb("shell", "getprop", "ro.build.version.sdk").strip()
+        report["stage"] = "clean emulator check"
+        packages = adb("shell", "pm", "list", "packages", PACKAGE).splitlines()
+        require("package:" + PACKAGE not in packages, "Use a clean emulator for each smoke scenario")
+        # Clear once, BEFORE any installation. Never hide install/upgrade crashes.
+        adb("logcat", "-b", "all", "-c")
+        if args.scenario == "fresh":
+            report["stage"] = "fresh install"
             install(args.directory / APK)
-            require(f"versionCode={info['version_code']} " in adb("shell", "dumpsys", "package", PACKAGE),
-                    "Upgrade did not install the candidate")
-            report["upgrade"] = "passed"
+            installed_version(info)
+            report["fresh_install"] = True
+        else:
+            report["stage"] = "download previous"
+            old_dir = args.directory.parent / "previous"
+            old = previous(os.environ["GITHUB_REPOSITORY"], old_dir)
+            if old is None:
+                report["upgrade"] = "skipped: no previous published release"
+                print("Upgrade check skipped: this repository has no published release yet.")
+            else:
+                require(old["version_code"] < info["version_code"], "Candidate is not newer than the latest release")
+                report["previous_sha256"] = old["apk_sha256"]
+                report["stage"] = "previous install"
+                install(old_dir / APK)
+                installed_version(old)
+                # Real old -> candidate replacement: no uninstall, data clear,
+                # force-stop, crash-log clearing or retry between these installs.
+                report["stage"] = "upgrade install"
+                install(args.directory / APK)
+                installed_version(info)
+                report["upgrade"] = "passed"
+        report["stage"] = "complete"
+    except Exception as error:
+        report["failure"] = str(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            report["adb_stdout"] = error.stdout
+            report["adb_stderr"] = error.stderr
+        raise
     finally:
+        # Capture crash separately and keep all buffered logs, not only the last
+        # 1500 lines: package/UID transitions can otherwise disappear on busy boots.
+        for filename, buffer in (("crash.txt", "crash"), ("logcat.txt", "all")):
+            try:
+                (LOGS / filename).write_text(adb("logcat", "-d", "-b", buffer), encoding="utf-8")
+            except Exception as error:
+                report.setdefault("diagnostic_errors", []).append(f"{filename}: {error}")
         save(LOGS / "report.json", report)
-        try:
-            (LOGS / "logcat.txt").write_text(adb("logcat", "-d", "-t", "1500"), encoding="utf-8")
-        except subprocess.SubprocessError:
-            pass
 
 
 if __name__ == "__main__":
