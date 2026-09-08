@@ -1,6 +1,5 @@
 package ru.romariogi.kanjihour;
 
-import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
@@ -9,7 +8,7 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Serializes wallpaper/settings writes and updates from every entry point. */
+/** One writer for settings, clean sources and wallpaper updates. */
 public final class UpdateCoordinator {
     private static final String TAG = "KanjiHourUpdate";
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
@@ -20,76 +19,82 @@ public final class UpdateCoordinator {
     private UpdateCoordinator() {}
     public static ExecutorService executor() { return EXECUTOR; }
 
-    public static void refresh(Context context, boolean forceWallpaper, Runnable completion) {
-        refresh(context, forceWallpaper, "ui_or_widget", completion);
+    public static void refresh(Context context, boolean force, Runnable completion) {
+        refresh(context, force, "ui_or_widget", completion);
     }
 
-    /** Completion runs on the worker thread, or immediately if dispatch fails. */
-    public static void refresh(Context context, boolean forceWallpaper, String trigger, Runnable completion) {
+    public static void refresh(Context context, boolean force, String trigger, Runnable completion) {
         Context app = context.getApplicationContext();
-        long received = System.currentTimeMillis();
-        long started = SystemClock.elapsedRealtime();
+        submit(app, trigger, () -> performRefresh(app, force), completion);
+    }
+
+    public static void enableLock(Context context, float y, float scale, Runnable completion) {
+        Context app = context.getApplicationContext();
+        submit(app, "enable_lock", () -> {
+            try {
+                LockWallpaperController.persist(Config.prefs(app).edit().putBoolean("lock_enabled", true)
+                        .putFloat("lock_y", Math.max(.2f, Math.min(.65f, y)))
+                        .putFloat("lock_scale", Math.max(.75f, Math.min(1.25f, scale))));
+                // Enabling changes scheduling needs; arm before the first potentially slow write.
+                HourlyScheduler.schedule(app);
+                performRefresh(app, true);
+            } catch (IOException error) { lockError(app, error); }
+        }, completion);
+    }
+
+    public static void disableLock(Context context, Runnable completion) {
+        Context app = context.getApplicationContext();
+        submit(app, "disable_lock", () -> {
+            try { LockWallpaperController.disableAndRemove(app); }
+            catch (IOException | RuntimeException error) { lockError(app, error); }
+        }, completion);
+    }
+
+    /** Completion also runs on dispatch failure, so receivers always release goAsync(). */
+    private static void submit(Context app, String trigger, Runnable work, Runnable completion) {
+        long received = System.currentTimeMillis(), started = SystemClock.elapsedRealtime();
+        long expected = Config.prefs(app).getLong("next_update_at", 0);
         RefreshTask.submit(EXECUTOR, () -> HourlyScheduler.schedule(app), () -> {
-            Config.prefs(app).edit().putString("last_trigger", trigger)
-                    .putLong("last_trigger_at", received).apply();
-            performRefresh(app, forceWallpaper);
+            Config.prefs(app).edit().putString("last_trigger", trigger).putLong("last_trigger_at", received)
+                    .putLong("last_expected_at", expected).apply();
+            if (HourlyScheduler.ACTION_REFRESH.equals(trigger))
+                Config.prefs(app).edit().putLong("last_alarm_at", received).putLong("last_alarm_expected_at", expected).apply();
+            if ("recovery".equals(trigger))
+                Config.prefs(app).edit().putLong("last_recovery_at", received).apply();
+            work.run();
         }, failure -> {
-            Log.w(TAG, "Hourly update failed", failure);
-            Config.prefs(app).edit().putString("update_error",
-                    "Не удалось обновить кандзи. Откройте приложение и повторите попытку.").apply();
+            Log.w(TAG, "Update failed", failure);
+            Config.prefs(app).edit().putString("update_error", "Не удалось обновить кандзи. Повторите попытку.").apply();
         }, () -> {
             try {
                 Config.prefs(app).edit().putLong("last_refresh_finished_at", System.currentTimeMillis())
                         .putLong("last_refresh_duration_ms", SystemClock.elapsedRealtime() - started).apply();
-            } finally {
-                if (completion != null) completion.run();
-            }
+            } finally { if (completion != null) completion.run(); }
         });
     }
 
-    private static void performRefresh(Context context, boolean forceWallpaper) {
+    private static void performRefresh(Context context, boolean force) {
         SharedPreferences prefs = Config.prefs(context);
         long now = System.currentTimeMillis();
-        long hour = Math.floorDiv(now, HourlyScheduler.HOUR_MILLIS);
         Kanji kanji = KanjiRepository.getAtTime(context, now);
         try {
-            KanjiWidgetProvider.updateAll(context, kanji);
-            prefs.edit().remove("update_error").putLong("widget_last_success", System.currentTimeMillis()).apply();
-        } catch (RuntimeException launcherFailure) {
-            Log.w(TAG, "Home widget update failed", launcherFailure);
+            if (KanjiWidgetProvider.widgetIds(context).length > 0) {
+                KanjiWidgetProvider.updateAll(context, kanji);
+                prefs.edit().putLong("widget_last_success", System.currentTimeMillis()).apply();
+            }
+            prefs.edit().remove("update_error").apply();
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Home widget update failed", error);
             prefs.edit().putString("update_error", "Не удалось обновить домашний виджет.").apply();
         }
-        if (!prefs.getBoolean("lock_enabled", false)) return;
-        if (wallpaperWasReplaced(context, prefs)) {
-            prefs.edit().putBoolean("lock_enabled", false).remove("lock_last_wallpaper_id")
-                    .remove("lock_last_hour").putString("lock_error",
-                    "Обои экрана блокировки были изменены. Для включения снова нажмите «Применить».").apply();
-            return;
-        }
-        if (!forceWallpaper && prefs.getLong("lock_last_hour", Long.MIN_VALUE) == hour) return;
-        try {
-            int wallpaperId = WallpaperRenderer.apply(context, kanji);
-            prefs.edit().putLong("lock_last_hour", hour)
-                    .putLong("lock_last_success", System.currentTimeMillis())
-                    .putInt("lock_last_wallpaper_id", wallpaperId).remove("lock_error").apply();
-        } catch (IOException | RuntimeException failure) {
-            Log.w(TAG, "Lock wallpaper update failed", failure);
-            prefs.edit().putString("lock_error", "Не удалось обновить экран блокировки.").apply();
-        }
+        try { LockWallpaperController.refresh(context, kanji, Math.floorDiv(now, HourlyScheduler.HOUR_MILLIS), force); }
+        catch (IOException | RuntimeException error) { lockError(context, error); }
     }
 
-    public static boolean wallpaperWasReplaced(Context context) {
-        return wallpaperWasReplaced(context, Config.prefs(context));
-    }
-    private static boolean wallpaperWasReplaced(Context context, SharedPreferences prefs) {
-        int lastId = prefs.getInt("lock_last_wallpaper_id", 0);
-        if (lastId <= 0) return false;
-        try {
-            int currentId = WallpaperManager.getInstance(context).getWallpaperId(WallpaperManager.FLAG_LOCK);
-            return currentId != 0 && currentId != lastId;
-        } catch (RuntimeException unavailable) {
-            Log.d(TAG, "Wallpaper identifier unavailable; preserving enabled state", unavailable);
-            return false;
-        }
+    private static void lockError(Context context, Exception error) {
+        Log.w(TAG, "Lock wallpaper update paused", error);
+        String message = error.getMessage();
+        Config.prefs(context).edit().putString("lock_error", message == null || message.trim().isEmpty()
+                ? "Не удалось обновить экран блокировки. Повторите попытку." : message).apply();
     }
 }

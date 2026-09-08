@@ -13,9 +13,10 @@ public final class Config {
         return context.getSharedPreferences("kanji_hour", Context.MODE_PRIVATE);
     }
     public static File sourceFile(Context context) {
-        return new File(context.getFilesDir(), "lock-background.jpg");
-    }
-    public static File draftSourceFile(Context context) {
-        return new File(context.getFilesDir(), "lock-background-draft.jpg");
+        String name = prefs(context).getString("lock_source_name", "lock-background.jpg");
+        // Only app-created basenames; the fallback is the clean source from version 0.2.
+        if (name == null || name.isEmpty() || name.contains("/") || name.contains("\\") || name.contains(".."))
+            throw new IllegalStateException("Некорректный путь исходного фона.");
+        return new File(context.getFilesDir(), name);
     }
 }

@@ -1,9 +1,9 @@
 package ru.romariogi.kanjihour;
 
-/** Pure selection rules: a missing lock image must never silently select the home image. */
+/** Pure rules for identifying a static lock background and reusing its clean source. */
 public final class WallpaperImportPolicy {
-    public enum Route { OWN_PHOTO, OWN_SOLID, LOCK_IMAGE, SHARED_IMAGE, LIVE, UNAVAILABLE }
-
+    public enum Route { OWN_PHOTO, LOCK_IMAGE, SHARED_IMAGE, LIVE, UNAVAILABLE }
+    public enum Recovery { CLEAR, QUARANTINE, BLOCK }
     private WallpaperImportPolicy() {}
 
     public static boolean isOwnWallpaper(int lockId, int lastOwnId) {
@@ -12,26 +12,36 @@ public final class WallpaperImportPolicy {
 
     public static Route select(int lockId, int systemId, int lastOwnId,
                                boolean hasOwnSource, boolean lockLive, boolean systemLive) {
-        if (isOwnWallpaper(lockId, lastOwnId)) {
-            return hasOwnSource ? Route.OWN_PHOTO : Route.OWN_SOLID;
-        }
         if (lockLive) return Route.LIVE;
+        if (isOwnWallpaper(lockId, lastOwnId)) {
+            return hasOwnSource ? Route.OWN_PHOTO : Route.UNAVAILABLE;
+        }
         if (lockId > 0) return Route.LOCK_IMAGE;
         if (lockId == 0) return Route.UNAVAILABLE;
-        // Only a negative ID documents that there is no separate lock wallpaper.
         if (systemLive) return Route.LIVE;
         return systemId > 0 ? Route.SHARED_IMAGE : Route.UNAVAILABLE;
     }
 
     public static boolean unchanged(int lockBefore, int systemBefore, int lockAfter, int systemAfter) {
-        return lockBefore == lockAfter && (lockBefore >= 0 || systemBefore == systemAfter);
+        return lockBefore != 0 && lockBefore == lockAfter
+                && (lockBefore > 0 || (systemBefore > 0 && systemBefore == systemAfter));
     }
 
-    /** Power-of-two sampling bounds even unusually large system wallpaper files. */
+    public static boolean needsUpdate(int lockId, int ownId, boolean hasGlyph,
+                                      long hour, long lastHour, boolean force) {
+        return force || !isOwnWallpaper(lockId, ownId) || !hasGlyph || hour != lastHour;
+    }
+
+    /** An interrupted write may have installed our glyph before its ID was saved. */
+    public static Recovery recovery(String current, String before, String uncertain) {
+        if (current.equals(before)) return Recovery.CLEAR;
+        if (uncertain.isEmpty()) return Recovery.QUARANTINE;
+        return current.equals(uncertain) ? Recovery.BLOCK : Recovery.CLEAR;
+    }
+
     public static int sampleSize(int width, int height, int maxDimension) {
-        if (width <= 0 || height <= 0 || maxDimension <= 0) {
+        if (width <= 0 || height <= 0 || maxDimension <= 0)
             throw new IllegalArgumentException("Invalid wallpaper dimensions");
-        }
         int sample = 1;
         int largest = Math.max(width, height);
         while (((long) largest + sample - 1L) / sample > maxDimension) {

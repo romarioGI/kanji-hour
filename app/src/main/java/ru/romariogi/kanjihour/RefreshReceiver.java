@@ -14,8 +14,10 @@ public final class RefreshReceiver extends BroadcastReceiver {
             if (pending != null) pending.finish();
         });
     }
+    @SuppressWarnings("deprecation")
     private static boolean handles(String action) {
         return HourlyScheduler.ACTION_REFRESH.equals(action)
+                || Intent.ACTION_WALLPAPER_CHANGED.equals(action)
                 || Intent.ACTION_BOOT_COMPLETED.equals(action)
                 || Intent.ACTION_TIME_CHANGED.equals(action)
                 || Intent.ACTION_TIMEZONE_CHANGED.equals(action)
