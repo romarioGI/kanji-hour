@@ -29,8 +29,9 @@ gh secret set KANJI_SIGNING_PASSWORD --repo romarioGI/kanji-hour < signing/devel
 
 ## Подготовить кандидата
 
-1. Внесите изменения в `trunk`. Перед следующей опубликованной версией измените
-   `versionName` в `app/src/main/AndroidManifest.xml`.
+1. Внесите изменения в отдельную ветку и слейте PR в `trunk` после успешного
+   `Checks`. Перед следующей опубликованной версией измените `versionName` в
+   `app/src/main/AndroidManifest.xml` через такой же PR.
 2. Откройте **Actions → Prepare release → Run workflow**, выберите `trunk`.
 3. После успешного завершения откройте **Summary**. Скачайте
    `release-candidate-<номер запуска>`, распакуйте `kanji-hour.apk`.
@@ -38,6 +39,10 @@ gh secret set KANJI_SIGNING_PASSWORD --repo romarioGI/kanji-hour < signing/devel
 
 Кандидат хранится 14 дней. Тесты, сборка и подпись используют один SHA коммита,
 зафиксированный при запуске. Новые изменения в `trunk` его не меняют.
+Для текущего процесса достаточно тега `v<versionName>`: его создаёт `Review release`
+на проверенном коммите после приёмки. Отдельные релизные ветки и `rc`-теги не используем.
+Не переносите релизные теги на другой коммит и не удаляйте их.
+Исправления вносите через новый PR и готовьте нового кандидата.
 
 После успешной подготовки `Release review issues` создаёт issue с APK, чек-листом
 и дедлайном из срока хранения артефакта. Новый готовый кандидат закрывает старую
@@ -110,10 +115,11 @@ SDK зафиксирован: Platform 35 r2, Build Tools 35.0.1. Использ
 их точные версии записываются в `build-info.json`. Побитовая повторимость сборки
 на разных версиях инструментов не заявляется. Внешние Actions закреплены по SHA.
 
-## После публикации репозитория
+## Серверная защита
 
 - [Штатная приёмка через Environments](https://github.com/romarioGI/kanji-hour/issues/2).
 - [Защита trunk, тегов и workflow](https://github.com/romarioGI/kanji-hour/issues/3).
 
+Правила и состояние защиты: [CONTRIBUTING.md](../CONTRIBUTING.md).
 Сейчас схема рассчитана на доверенных участников с правом записи. Проверки
 в workflow не заменяют серверные правила защиты от изменения самого workflow.
