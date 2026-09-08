@@ -68,7 +68,14 @@ public final class LockWallpaperController {
                     .putString("lock_source_key", source.snapshot.key())
                     .putBoolean("lock_write_pending", true)
                     .putString("lock_write_before", source.snapshot.key()).remove("lock_write_uncertain"));
-            CurrentWallpaperImporter.ensureCurrent(context, source.snapshot);
+            try {
+                CurrentWallpaperImporter.ensureCurrent(context, source.snapshot);
+            } catch (IOException | RuntimeException changedBeforeWrite) {
+                // No system write was attempted: do not quarantine a known external change.
+                persist(prefs.edit().putBoolean("lock_write_pending", false)
+                        .remove("lock_write_before").remove("lock_write_uncertain"));
+                throw changedBeforeWrite;
+            }
             int id = WallpaperRenderer.setLockBitmap(context, bitmap);
             persist(prefs.edit().putInt("lock_last_wallpaper_id", id)
                     .putBoolean("lock_has_glyph", kanji != null).putLong("lock_last_hour", hour)

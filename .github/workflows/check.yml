@@ -1,0 +1,22 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches: [trunk, fix/hourly-recovery-current-wallpaper]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: JVM tests
+        run: python3 tools/test.py
+      - name: Android SDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.1"
+      - name: Compile Android resources, Java and DEX
+        run: python3 tools/check_android.py --sdk "$ANDROID_HOME"
