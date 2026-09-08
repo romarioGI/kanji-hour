@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "app/src/main/java/ru/romariogi/kanjihour"
-PURE = ("HourlySelection", "WallpaperImportPolicy", "RefreshTask", "RefreshCancellation")
+PURE = ("HourlySelection", "WallpaperImportPolicy", "RefreshTask", "RefreshCancellation", "PreviewRequests")
 CONTROLLER = ("Config", "LockWallpaperController", "WallpaperImportPolicy", "RefreshTask",
               "RefreshCancellation", "UpdateCoordinator", "RecoveryJobService")
 

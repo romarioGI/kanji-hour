@@ -28,7 +28,6 @@ import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
-import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -44,21 +43,22 @@ public final class MainActivity extends Activity {
     private Button apply, remove;
     private ClockGuide clockGuide;
     private float draftY, draftScale;
-    private volatile int previewGeneration;
+    private final PreviewRequests<Bitmap> previewRequests = new PreviewRequests<>(
+            UpdateCoordinator.executor(), this::runOnUiThread, Bitmap::recycle, this::showPreview);
     private boolean busy;
     private final SharedPreferences.OnSharedPreferenceChangeListener listener = (prefs, key) -> {
-        if (!isDestroyed()) runOnUiThread(() -> {
-            if (isDestroyed()) return;
+        if (isScreenStarted()) runOnUiThread(() -> {
+            if (!isScreenStarted()) return;
             updateStatuses();
             if ("lock_last_success".equals(key) || "lock_error".equals(key)) requestPreview();
         });
     };
     private final Runnable nextHour = new Runnable() {
         @Override public void run() {
-            if (isFinishing() || isDestroyed()) return;
+            if (isFinishing() || !isScreenStarted()) return;
             updateCard();
             UpdateCoordinator.refresh(getApplicationContext(), false, "foreground", () -> runOnUiThread(() -> {
-                if (!isDestroyed()) { updateStatuses(); requestPreview(); }
+                if (isScreenStarted()) { updateStatuses(); requestPreview(); }
             }));
             armForegroundRefresh();
         }
@@ -70,15 +70,27 @@ public final class MainActivity extends Activity {
         draftY = state == null ? prefs.getFloat("lock_y", Config.DEFAULT_Y) : state.getFloat("y", Config.DEFAULT_Y);
         draftScale = state == null ? prefs.getFloat("lock_scale", 1f) : state.getFloat("scale", 1f);
         buildScreen();
-        prefs.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        previewRequests.start();
+        Config.prefs(this).registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    @Override protected void onStop() {
+        previewRequests.stop();
+        Config.prefs(this).unregisterOnSharedPreferenceChangeListener(listener);
+        super.onStop();
     }
 
     @Override protected void onResume() {
         super.onResume();
         updateCard();
-        updateStatuses();
+        // An operation may have completed while stopped: restore the button state too.
+        setBusy(busy);
         UpdateCoordinator.refresh(getApplicationContext(), false, "foreground", () -> runOnUiThread(() -> {
-            if (!isDestroyed()) { updateStatuses(); requestPreview(); }
+            if (isScreenStarted()) { updateStatuses(); requestPreview(); }
         }));
         armForegroundRefresh();
     }
@@ -95,7 +107,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        previewGeneration++;
+        previewRequests.stop();
         Config.prefs(this).unregisterOnSharedPreferenceChangeListener(listener);
         handler.removeCallbacksAndMessages(null);
         replacePreview(null);
@@ -202,7 +214,8 @@ public final class MainActivity extends Activity {
 
     private void operationFinished() {
         runOnUiThread(() -> {
-            if (isDestroyed()) return;
+            busy = false;
+            if (!isScreenStarted()) return;
             setBusy(false);
             updateCard();
             updateStatuses();
@@ -210,35 +223,22 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private boolean isScreenStarted() { return previewRequests.isStarted() && !isDestroyed(); }
+
     private void requestPreview() {
-        if (isDestroyed()) return;
-        int generation = ++previewGeneration;
+        if (!isScreenStarted()) return;
         float y = draftY, scale = draftScale;
         android.content.Context app = getApplicationContext();
         previewStatus.setText("Чтение текущих обоев…");
-        try {
-            UpdateCoordinator.executor().execute(() -> {
-                if (generation != previewGeneration) return;
-                Bitmap bitmap = null;
-                String error = null;
-                try { bitmap = LockWallpaperController.preview(app, KanjiRepository.getCurrent(app), y, scale); }
-                catch (IOException | RuntimeException failure) { error = failure.getMessage(); }
-                final Bitmap result = bitmap;
-                final String message = error;
-                runOnUiThread(() -> {
-                    if (isDestroyed() || generation != previewGeneration) {
-                        if (result != null) result.recycle();
-                        return;
-                    }
-                    replacePreview(result);
-                    previewStatus.setText(result != null ? "Текущий фон. Положение сохранится после применения."
-                            : (message == null ? "Предпросмотр недоступен. Обои не изменены." : message));
-                });
-            });
-        } catch (RuntimeException failure) {
-            replacePreview(null);
-            previewStatus.setText("Не удалось открыть предпросмотр. Повторите попытку.");
-        }
+        previewRequests.request(() -> LockWallpaperController.preview(app, KanjiRepository.getCurrent(app), y, scale));
+    }
+
+    private void showPreview(Bitmap result, Exception failure) {
+        // PreviewRequests publishes only the latest result of a currently visible screen.
+        replacePreview(result);
+        String message = failure == null ? null : failure.getMessage();
+        previewStatus.setText(result != null ? "Текущий фон. Положение сохранится после применения."
+                : (message == null ? "Предпросмотр недоступен. Обои не изменены." : message));
     }
 
     private void replacePreview(Bitmap bitmap) {
