@@ -34,7 +34,11 @@ public final class RefreshTask {
                 } catch (RuntimeException error) {
                     failure.accept(error);
                 } finally {
-                    try { arm.run(); } finally { finish.run(); }
+                    // Do not replace the still-pending hourly alarm after slow work.
+                    // A refresh started before :00 can finish after :00 with the old
+                    // glyph; re-arming here would silently postpone its catch-up.
+                    // Enable/disable operations schedule their state changes explicitly.
+                    finish.run();
                 }
             });
         } catch (RuntimeException error) {

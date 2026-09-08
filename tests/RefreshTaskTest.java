@@ -18,13 +18,13 @@ public final class RefreshTaskTest {
         equal(events, List.of("arm")); // Next alarm exists while worker is blocked.
         equal(queue.size(), 1);
         queue.remove(0).run();
-        equal(events, List.of("arm", "work", "arm", "finish"));
+        equal(events, List.of("arm", "work", "finish"));
 
         events.clear();
         RefreshTask.submit(Runnable::run, () -> events.add("arm"),
                 () -> { events.add("work"); throw new IllegalStateException(); },
                 e -> events.add("error"), () -> events.add("finish"));
-        equal(events, List.of("arm", "work", "error", "arm", "finish"));
+        equal(events, List.of("arm", "work", "error", "finish"));
 
         events.clear();
         Executor rejected = task -> { throw new RejectedExecutionException(); };
