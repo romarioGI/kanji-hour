@@ -104,7 +104,7 @@ class CandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, env), patch.object(release, "run") as run:
             path = Path(temp)
             (path / "build-info.json").write_text(json.dumps(INFO))
-            with self.assertRaisesRegex(ValueError, "repository secrets"):
+            with self.assertRaisesRegex(ValueError, "signing environment secrets"):
                 release.sign(path, path, path / "signed")
             run.assert_not_called()
 
@@ -164,11 +164,16 @@ class ReviewTests(unittest.TestCase):
         self.expired = False
         self.releases = []
         self.writes = []
-        self.env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/trunk",
+        event_path = self.root / "event.json"
+        event_path.write_text(json.dumps({"action": "completed", "repository": {"full_name": REPO},
+                                         "workflow_run": RUN}))
+        self.native = {"state": "approved", "environments": [{"name": "release"}],
+                       "user": {"type": "User", "login": "reviewer"},
+                       "comment": f"SHA-256: {INFO['apk_sha256']}\nPOCO / Android 14: passed"}
+        self.env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/trunk",
                     "GITHUB_REPOSITORY": REPO, "GITHUB_SHA": "b" * 40, "GITHUB_RUN_ID": "999",
                     "GITHUB_ACTOR": "reviewer", "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
-                    "CANDIDATE_RUN_ID": "123", "DECISION": "approve", "PHONE_REPORT": "POCO / Android 14: passed",
-                    "TESTED_SHA256": INFO["apk_sha256"]}
+                    "GITHUB_EVENT_PATH": str(event_path), "GITHUB_RUN_ATTEMPT": "1"}
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, self.env).start()
         patch.object(release, "ROOT", self.root).start()
@@ -177,6 +182,7 @@ class ReviewTests(unittest.TestCase):
 
     def api(self, repo, endpoint, data=None, **kwargs):
         if endpoint == "actions/runs/123": return copy.deepcopy(RUN)
+        if endpoint == "actions/runs/999/approvals": return [self.native]
         if endpoint == "actions/workflows/prepare-release.yml": return {"id": 9}
         if endpoint.startswith("compare/"): return {"status": "ahead"}
         if endpoint.startswith("commits/"): return [{"context": "release/phone/123", "state": self.prior}]
@@ -197,7 +203,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.writes[-1]["state"], "success")
 
     def test_rejection_fails_without_publication(self):
-        os.environ["DECISION"] = "reject"
+        self.native["state"] = "rejected"
         with self.assertRaisesRegex(ValueError, "rejected"):
             release.review(self.root / "candidate")
         self.publish.assert_not_called()
@@ -217,13 +223,13 @@ class ReviewTests(unittest.TestCase):
         self.publish.assert_not_called()
 
     def test_wrong_tested_checksum_blocks_publication(self):
-        os.environ["TESTED_SHA256"] = "0" * 64
+        self.native["comment"] = "SHA-256: " + "0" * 64 + "\nPOCO / Android 14: passed"
         with self.assertRaisesRegex(ValueError, "different APK"):
             release.review(self.root / "candidate")
         self.publish.assert_not_called()
 
     def test_publication_cannot_be_rejected_even_if_status_write_failed(self):
-        os.environ["DECISION"] = "reject"
+        self.native["state"] = "rejected"
         self.releases = [{"draft": False, "body": release.marker(INFO)}]
         with self.assertRaisesRegex(ValueError, "Already published"):
             release.review(self.root / "candidate")

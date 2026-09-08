@@ -27,15 +27,6 @@ jobs:
             echo '::error::Start a new Prepare release run from trunk. Do not re-run a candidate.'
             exit 1
           fi
-      - name: Require original signing secrets
-        env:
-          KEY: ${{ secrets.KANJI_SIGNING_KEY_B64 }}
-          PASSWORD: ${{ secrets.KANJI_SIGNING_PASSWORD }}
-        run: |
-          if [[ -z "$KEY" || -z "$PASSWORD" ]]; then
-            echo '::error::Configure KANJI_SIGNING_KEY_B64 and KANJI_SIGNING_PASSWORD in repository Actions secrets. See docs/RELEASING.md. No new key will be generated.'
-            exit 1
-          fi
 
   build:
     needs: preflight
@@ -69,11 +60,21 @@ jobs:
 
   sign:
     needs: build
+    environment: signing
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       candidate-url: ${{ steps.upload.outputs.artifact-url }}
     steps:
+      - name: Require original signing secrets
+        env:
+          KEY: ${{ secrets.KANJI_SIGNING_KEY_B64 }}
+          PASSWORD: ${{ secrets.KANJI_SIGNING_PASSWORD }}
+        run: |
+          if [[ -z "$KEY" || -z "$PASSWORD" ]]; then
+            echo '::error::Configure KANJI_SIGNING_KEY_B64 and KANJI_SIGNING_PASSWORD in the signing environment. See docs/RELEASING.md. No new key will be generated.'
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}

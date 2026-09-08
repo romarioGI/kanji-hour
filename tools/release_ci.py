@@ -138,7 +138,7 @@ def sign(sdk, source, directory):
             "Unsigned artifact belongs to a different run")
     key = os.environ.pop("KANJI_SIGNING_KEY_B64", "")
     password = os.environ.pop("KANJI_SIGNING_PASSWORD", "").rstrip("\r\n")
-    require(key and password, "Configure KANJI_SIGNING_KEY_B64 and KANJI_SIGNING_PASSWORD repository secrets")
+    require(key and password, "Configure KANJI_SIGNING_KEY_B64 and KANJI_SIGNING_PASSWORD in signing environment secrets")
     require("\n" not in password and "\r" not in password, "Signing password must be one line")
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="kanji-signing-", dir=os.environ.get("RUNNER_TEMP")) as temp:
@@ -205,8 +205,11 @@ def ready(directory):
             f"Версия: `{info['version_name']}`; versionCode: `{info['version_code']}`.\n\n"
             f"Коммит: `{info['commit']}`.\n\nSHA-256 APK: `{info['apk_sha256']}`.\n\n"
             f"[Скачать APK-кандидат]({os.environ['CANDIDATE_URL']})\n\n"
-            "После проверки на телефоне запустите **Review release** из trunk. "
-            "Нужны номер кандидата, решение, SHA-256 APK и результат проверки. "
+            "После завершения подготовки автоматически появится **Review release**. "
+            "Проверьте APK на телефоне, затем откройте **Review deployments** "
+            "и выберите **Approve and deploy** или **Reject** для окружения `release`. "
+            "В комментарии к Approve укажите отдельную строку `SHA-256: <хеш APK>`, "
+            "ниже — телефон, ОС и результат. "
             "Инструкция: `docs/RELEASING.md`. Кандидат хранится 14 дней.")
 
 
@@ -227,7 +230,7 @@ def publishable(releases, info):
     return own
 
 
-def publish(repo, info, directory, report, releases):
+def publish(repo, info, directory, report, releases, reviewer=None):
     tag = "v" + info["version_name"]
     release = publishable(releases, info)
     ref = api(repo, f"git/ref/tags/{tag}", missing_ok=True)
@@ -239,7 +242,7 @@ def publish(repo, info, directory, report, releases):
         quoted_report = "\n".join("> " + line.replace("<", "&lt;") for line in report.splitlines())
         body = (f"{marker(info)}\n<!-- kanji-hour-version-code:{info['version_code']} -->\n"
                 f"Коммит: `{info['commit']}`. Кандидат: `{info['run_id']}`.\n\n"
-                f"SHA-256 APK: `{info['apk_sha256']}`.\n\nПроверил: `{os.environ['GITHUB_ACTOR']}`.\n\n" + quoted_report)
+                f"SHA-256 APK: `{info['apk_sha256']}`.\n\nПроверил: `{reviewer or os.environ['GITHUB_ACTOR']}`.\n\n" + quoted_report)
         release = api(repo, "releases", {"tag_name": tag, "target_commitish": info["commit"],
             "name": "Кандзи · час " + info["version_name"], "body": body, "draft": True, "prerelease": False})
     if ref is None:
@@ -266,20 +269,65 @@ def publish(repo, info, directory, report, releases):
     return release["html_url"]
 
 
-def review(directory):
-    guard()
+def deployment_decision(repo, reject_only=False):
+    """Read GitHub's native decision; never trust DECISION or dispatch inputs.
+
+    The workflow has no manual trigger: its event fixes one candidate for all
+    attempts. Any rejection wins, including one whose status write failed.
+    Repeated approvals are usable only when they all name the same tested APK.
+    """
+    history = api(repo, f"actions/runs/{number(os.environ['GITHUB_RUN_ID'])}/approvals")
+    require(isinstance(history, list), "Invalid deployment review history")
+    records = [r for r in history if any(e.get("name") == "release" for e in r.get("environments", []))]
+    rejected = [r for r in records if r.get("state") == "rejected"]
+    if rejected:
+        record = rejected[0]
+        decision, tested_sha = "reject", ""
+        report = (record.get("comment") or "").strip() or "Rejected through GitHub Environments"
+    elif reject_only:
+        return None  # Cancellation or a technical failure is not a phone rejection.
+    else:
+        require(records and all(r.get("state") == "approved" for r in records),
+                "Native release approval is missing; configure required reviewers for release")
+        hashes = set()
+        for record in records:
+            comment = (record.get("comment") or "").replace("\r\n", "\n").strip()
+            require(len(comment) <= 4000, "Deployment comment is too long (maximum 4000 characters)")
+            pattern = r"(?mi)^SHA-256:[ \t]*([0-9a-f]{64})[ \t]*$"
+            matches = re.findall(pattern, comment)
+            require(len(matches) == 1, "Approval comment must contain one SHA-256: <tested APK hash> line")
+            report = re.sub(pattern, "", comment).strip()
+            require(len(report) >= 10, "Describe phone, OS and result in the approval comment")
+            hashes.add(matches[0].lower())
+        require(len(hashes) == 1, "Conflicting APK checksums in deployment approvals")
+        decision, tested_sha = "approve", hashes.pop()
+        # No ordering assumption: record is an actual valid reviewer, not necessarily the latest.
+    reviewer = record.get("user") or {}
+    require(reviewer.get("type") == "User" and
+            re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer.get("login", "")), "Human deployment reviewer required")
+    return {"decision": decision, "tested_sha256": tested_sha, "report": report,
+            "actor": reviewer["login"]}
+
+
+def review(directory, reject_only=False):
+    require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_run", "Review requires a completed Prepare release event")
+    require(os.environ.get("GITHUB_REF") == "refs/heads/trunk", "Review must use trusted trunk code")
     repo = os.environ["GITHUB_REPOSITORY"]
-    run_id = number(os.environ["CANDIDATE_RUN_ID"])
-    decision = os.environ["DECISION"]
-    report = os.environ.get("PHONE_REPORT", "").strip()
-    require(decision in ("approve", "reject"), "Choose approve or reject")
-    require(10 <= len(report) <= 4000, "Describe phone, OS and result/reason (10–4000 characters)")
-    tested_sha = os.environ.get("TESTED_SHA256", "").strip().lower()
-    save(ROOT / "build/review/review.json", {"candidate_run_id": run_id, "decision": decision,
-        "report": report, "actor": os.environ["GITHUB_ACTOR"], "review_run_id": number(os.environ["GITHUB_RUN_ID"]),
-        "tested_sha256": tested_sha})
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    require(event.get("action") == "completed" and event["repository"]["full_name"].lower() == repo.lower(),
+            "Foreign or incomplete workflow event")
+    trigger = event["workflow_run"]
+    run_id = number(trigger["id"])
     candidate = api(repo, f"actions/runs/{run_id}")
     validate_run(candidate, repo, api(repo, "actions/workflows/prepare-release.yml")["id"])
+    require(trigger["head_sha"] == candidate["head_sha"], "Trigger no longer matches the candidate")
+    accepted = deployment_decision(repo, reject_only=reject_only)
+    if accepted is None:
+        return
+    decision, report, tested_sha = accepted["decision"], accepted["report"], accepted["tested_sha256"]
+    save(ROOT / "build/review/review.json", dict(accepted, candidate_run_id=run_id,
+        review_run_id=number(os.environ["GITHUB_RUN_ID"]),
+        review_run_attempt=number(os.environ["GITHUB_RUN_ATTEMPT"]), environment="release"))
     compared = api(repo, f"compare/{candidate['head_sha']}...{os.environ['GITHUB_SHA']}")
     require(compared["status"] in ("ahead", "identical"), "Candidate is no longer an ancestor of trunk")
     prior = next((s for s in pages(repo, f"commits/{candidate['head_sha']}/statuses")
@@ -305,14 +353,14 @@ def review(directory):
     info = unpack(raw, artifact.get("digest"), candidate, repo, directory)
     require(info["apk_sha256"] == tested_sha, "You approved a different APK checksum")
     # No build, signing or APK rewriting occurs during review/publication.
-    url = publish(repo, info, directory, report, releases)
+    url = publish(repo, info, directory, report, releases, reviewer=accepted["actor"])
     set_status(repo, info["commit"], run_id, "success", "Phone acceptance passed; exact tested APK published")
     summary(f"## Релиз состоялся\n\n{url}\n\nAPK SHA-256: `{info['apk_sha256']}`")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "sign", "ready", "review"))
+    parser.add_argument("command", choices=("prepare", "sign", "ready", "review", "reject"))
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "kanji-sdk")
     parser.add_argument("--source", type=Path, default=ROOT / "build/unsigned")
     parser.add_argument("--directory", type=Path, default=ROOT / "build/candidate")
@@ -321,7 +369,7 @@ def main():
         if args.command == "prepare": prepare(args.sdk, args.directory)
         elif args.command == "sign": sign(args.sdk, args.source, args.directory)
         elif args.command == "ready": ready(args.directory)
-        else: review(args.directory)
+        else: review(args.directory, reject_only=args.command == "reject")
     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError, KeyError, zipfile.BadZipFile) as error:
         print("Release stopped: " + str(error), file=sys.stderr)
         return 1
