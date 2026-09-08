@@ -36,7 +36,28 @@ jobs:
           python-version: '3.13'
       - name: Check data, XML, JVM tests and release logic
         run: python3 tools/check.py
-      - name: Build APK without signing secrets
-        run: >-
-          python3 tools/build_native.py --bootstrap --unsigned
-          --sdk "$RUNNER_TEMP/kanji-sdk" --output build/ci-unsigned.apk
+      - name: Build unsigned APK and check version override
+        env:
+          CI_VERSION_CODE: '123456789'
+        run: |
+          python3 tools/build_native.py --bootstrap --unsigned \
+            --sdk "$RUNNER_TEMP/kanji-sdk" --output build/ci-unsigned.apk \
+            --version-code "$CI_VERSION_CODE"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import xml.etree.ElementTree as ET
+
+          manifest = ET.parse("app/src/main/AndroidManifest.xml").getroot()
+          expected = (manifest.attrib["package"], os.environ["CI_VERSION_CODE"],
+                      manifest.attrib["{http://schemas.android.com/apk/res/android}versionName"])
+          aapt2 = Path(os.environ["RUNNER_TEMP"]) / "kanji-sdk/build-tools/35.0.1/aapt2"
+          badging = subprocess.check_output([aapt2, "dump", "badging", "build/ci-unsigned.apk"], text=True)
+          package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging)
+          actual = package.groups() if package else None
+          if actual != expected:
+              raise SystemExit(f"APK package/version mismatch: expected {expected}, got {actual}")
+          print(f"APK version override verified: {actual}")
+          PY

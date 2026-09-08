@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import release_ci as release
 import build_native
-from check import check_data
+from check import check_data, PERMISSIONS
 
 REPO = "romarioGI/kanji-hour"
 SHA = "a" * 40
@@ -121,6 +122,36 @@ class CandidateTests(unittest.TestCase):
             path.write_text(path.read_text() + "日\tニチ\tひ\tдень\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 check_data(path)
+
+
+class ApkVerificationTests(unittest.TestCase):
+    def verify(self, minimum, target="targetSdkVersion:'34'"):
+        badging = (f"package: name='{release.PACKAGE}' versionCode='{INFO['version_code']}' "
+                   f"versionName='{INFO['version_name']}'\n{minimum}\n{target}\n"
+                   + "\n".join(f"uses-permission: name='{name}'" for name in sorted(PERMISSIONS)))
+        signature = f"Signer #1 certificate SHA-256 digest: {release.CERTIFICATE}\n"
+        with tempfile.TemporaryDirectory() as temp:
+            apk = Path(temp) / release.APK
+            data = b"dictionary fixture"
+            with zipfile.ZipFile(apk, "w") as archive:
+                archive.writestr("assets/kanji.tsv", data)
+            outputs = [subprocess.CompletedProcess([], 0, stdout=value)
+                       for value in (signature, "", badging)]
+            with patch.object(release, "run", side_effect=outputs):
+                release.verify_apk(Path(temp), apk, dict(INFO, data_sha256=release.digest(data)))
+
+    def test_supported_aapt2_minimum_sdk_labels(self):
+        for label in ("minSdkVersion", "sdkVersion"):
+            with self.subTest(label=label):
+                self.verify(f"{label}:'34'")
+
+    def test_wrong_or_missing_sdk_is_rejected(self):
+        for minimum, target in (("minSdkVersion:'33'", "targetSdkVersion:'34'"),
+                                ("minSdkVersion:'34'", "targetSdkVersion:'35'"),
+                                ("", "targetSdkVersion:'34'"),
+                                ("minSdkVersion:'34'", "")):
+            with self.subTest(minimum=minimum, target=target), self.assertRaisesRegex(ValueError, "SDK levels"):
+                self.verify(minimum, target)
 
 
 class ReviewTests(unittest.TestCase):
