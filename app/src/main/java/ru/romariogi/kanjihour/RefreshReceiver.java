@@ -5,19 +5,19 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 
-/** Rebuilds the hourly surfaces and recovers alarms after reboot, clock edits and upgrades. */
+/** Restores hourly surfaces after alarms, reboot, clock edits and upgrades. */
 public final class RefreshReceiver extends BroadcastReceiver {
-    @Override
-    public void onReceive(Context context, Intent intent) {
+    @Override public void onReceive(Context context, Intent intent) {
         if (intent == null || !handles(intent.getAction())) return;
         final PendingResult pending = goAsync();
-        UpdateCoordinator.refresh(context, false, () -> {
+        UpdateCoordinator.refresh(context, false, intent.getAction(), () -> {
             if (pending != null) pending.finish();
         });
     }
-
+    @SuppressWarnings("deprecation")
     private static boolean handles(String action) {
         return HourlyScheduler.ACTION_REFRESH.equals(action)
+                || Intent.ACTION_WALLPAPER_CHANGED.equals(action)
                 || Intent.ACTION_BOOT_COMPLETED.equals(action)
                 || Intent.ACTION_TIME_CHANGED.equals(action)
                 || Intent.ACTION_TIMEZONE_CHANGED.equals(action)

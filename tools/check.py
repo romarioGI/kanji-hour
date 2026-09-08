@@ -49,17 +49,9 @@ def main():
     if {x.attrib[ANDROID + "name"] for x in manifest.findall("uses-permission")} != PERMISSIONS:
         raise ValueError("Permissions changed; review and update the allow-list deliberately")
     print(f"Dictionary: {check_data(source / 'assets/kanji.tsv')} unique kanji", flush=True)
-    output = ROOT / "build/tests"
-    output.mkdir(parents=True, exist_ok=True)
-    java_source = source / "java/ru/romariogi/kanjihour"
-    tests = sorted((ROOT / "tests").glob("*Test.java"))
-    if not tests:
-        raise ValueError("No JVM tests found")
-    subprocess.run(["java", "-m", "jdk.compiler/com.sun.tools.javac.Main", "-encoding", "UTF-8",
-                    "-d", str(output), str(java_source / "HourlySelection.java"),
-                    str(java_source / "WallpaperImportPolicy.java"), *map(str, tests)], check=True)
-    for test in tests:
-        subprocess.run(["java", "-ea", "-cp", str(output), test.stem], check=True)
+    # Keep one JVM entry point so new production dependencies and controller doubles
+    # are included in both local runs and the release pipeline.
+    subprocess.run([sys.executable, str(ROOT / "tools/test.py")], check=True)
     suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"), pattern="test_*.py")
     if not suite.countTestCases():
         raise ValueError("No release-pipeline tests found")
