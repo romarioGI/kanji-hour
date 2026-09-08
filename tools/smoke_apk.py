@@ -38,8 +38,11 @@ def previous(repo, directory):
         return None
     assets = {a["name"]: a for a in release["assets"]}
     require(APK in assets and "build-info.json" in assets, "Previous release lacks APK/metadata")
-    info = json.loads(api(repo, f"releases/assets/{assets['build-info.json']['id']}", binary=True))
-    content = api(repo, f"releases/assets/{assets[APK]['id']}", binary=True)
+    # Asset endpoints need octet-stream even for JSON files; binary only controls decoding.
+    info = json.loads(api(repo, f"releases/assets/{assets['build-info.json']['id']}", binary=True,
+                          accept="application/octet-stream"))
+    content = api(repo, f"releases/assets/{assets[APK]['id']}", binary=True,
+                  accept="application/octet-stream")
     require(info["package"] == PACKAGE and digest(content) == info["apk_sha256"], "Previous release checksum mismatch")
     directory.mkdir(parents=True, exist_ok=True)
     (directory / APK).write_bytes(content)
