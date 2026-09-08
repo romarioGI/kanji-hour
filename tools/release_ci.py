@@ -43,11 +43,12 @@ def run(args, **kwargs):
     return subprocess.run([str(x) for x in args], check=True, **kwargs)
 
 
-def api(repo, endpoint, data=None, method=None, binary=False, missing_ok=False):
+def api(repo, endpoint, data=None, method=None, binary=False, missing_ok=False,
+        accept="application/vnd.github+json"):
+    # Raw response bytes and the endpoint's requested media type are independent.
     args = ["gh", "api", "--method", method or ("POST" if data is not None else "GET"),
+            "-H", f"Accept: {accept}",
             "-H", "X-GitHub-Api-Version: 2022-11-28", f"repos/{repo}/{endpoint}"]
-    if binary:
-        args += ["-H", "Accept: application/octet-stream"]
     if data is not None:
         args += ["--input", "-"]
     result = subprocess.run(args, input=json.dumps(data).encode() if data is not None else None,
@@ -248,7 +249,8 @@ def publish(repo, info, directory, report, releases):
     require(set(assets) <= FILES, "Unexpected release assets")
     for name, checksum in expected.items():
         if name in assets:
-            require(digest(api(repo, f"releases/assets/{assets[name]['id']}", binary=True)) == checksum,
+            require(digest(api(repo, f"releases/assets/{assets[name]['id']}", binary=True,
+                              accept="application/octet-stream")) == checksum,
                     "Existing release asset differs; refusing overwrite")
         else:
             require(release["draft"], "Published release is incomplete; refusing modification")
@@ -256,7 +258,8 @@ def publish(repo, info, directory, report, releases):
     assets = {a["name"]: a for a in api(repo, f"releases/{release['id']}/assets?per_page=100")}
     require(set(assets) == FILES, "Incomplete release upload")
     for name, checksum in expected.items():
-        require(digest(api(repo, f"releases/assets/{assets[name]['id']}", binary=True)) == checksum,
+        require(digest(api(repo, f"releases/assets/{assets[name]['id']}", binary=True,
+                          accept="application/octet-stream")) == checksum,
                 "Uploaded release asset mismatch")
     if release["draft"]:
         release = api(repo, f"releases/{release['id']}", {"draft": False, "make_latest": "true"}, method="PATCH")
