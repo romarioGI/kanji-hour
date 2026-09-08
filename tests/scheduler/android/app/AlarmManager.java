@@ -4,13 +4,15 @@ public final class AlarmManager {
     public static final int RTC_WAKEUP = 0;
     public long next;
     public int sets, cancels;
-    public boolean exact, revokedDuringSet, installedExact;
+    public boolean exact, revokedDuringSet, installedExact, registrationFails;
     public boolean canScheduleExactAlarms() { return exact; }
     public void setExactAndAllowWhileIdle(int type, long when, PendingIntent intent) {
+        if (registrationFails) throw new IllegalStateException("alarm registration failed");
         if (revokedDuringSet) throw new SecurityException("permission revoked");
         next = when; installedExact = true; sets++;
     }
     public void setAndAllowWhileIdle(int type, long when, PendingIntent intent) {
+        if (registrationFails) throw new IllegalStateException("alarm registration failed");
         next = when; installedExact = false; sets++;
     }
     public void cancel(PendingIntent intent) { next = 0; cancels++; }
