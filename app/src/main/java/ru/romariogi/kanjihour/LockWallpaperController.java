@@ -13,6 +13,12 @@ public final class LockWallpaperController {
     private LockWallpaperController() {}
 
     public static void refresh(Context context, Kanji kanji, long hour, boolean force) throws IOException {
+        refresh(context, kanji, hour, force, new RefreshCancellation());
+    }
+
+    public static void refresh(Context context, Kanji kanji, long hour, boolean force,
+                               RefreshCancellation cancellation) throws IOException {
+        cancellation.throwIfCancelled();
         SharedPreferences prefs = Config.prefs(context);
         if (!prefs.getBoolean("lock_enabled", false)) return;
         Snapshot snapshot = checkedSnapshot(context);
@@ -22,7 +28,7 @@ public final class LockWallpaperController {
             return;
         }
         try (Source source = CurrentWallpaperImporter.read(context, snapshot)) {
-            write(context, source, kanji, hour);
+            write(context, source, kanji, hour, cancellation);
         }
     }
 
@@ -51,16 +57,20 @@ public final class LockWallpaperController {
             return;
         }
         try (Source source = CurrentWallpaperImporter.read(context, snapshot)) {
-            write(context, source, null, Long.MIN_VALUE);
+            write(context, source, null, Long.MIN_VALUE, new RefreshCancellation());
         }
     }
 
-    private static void write(Context context, Source source, Kanji kanji, long hour) throws IOException {
+    private static void write(Context context, Source source, Kanji kanji, long hour,
+                              RefreshCancellation cancellation) throws IOException {
+        cancellation.throwIfCancelled();
         SharedPreferences prefs = Config.prefs(context);
         Bitmap bitmap = WallpaperRenderer.render(source.file, kanji, Config.WALL_WIDTH,
                 prefs.getFloat("lock_y", Config.DEFAULT_Y), prefs.getFloat("lock_scale", 1f));
         try {
+            cancellation.throwIfCancelled();
             CurrentWallpaperImporter.ensureCurrent(context, source.snapshot);
+            cancellation.throwIfCancelled();
             // Preserve the clean file and an intent-to-write BEFORE touching system wallpaper.
             // If the process dies after setBitmap, the next attempt must not import our own glyph.
             source.retain();
@@ -70,13 +80,16 @@ public final class LockWallpaperController {
                     .putString("lock_write_before", source.snapshot.key()).remove("lock_write_uncertain"));
             try {
                 CurrentWallpaperImporter.ensureCurrent(context, source.snapshot);
+                cancellation.throwIfCancelled();
             } catch (IOException | RuntimeException changedBeforeWrite) {
-                // No system write was attempted: do not quarantine a known external change.
+                // No system write was attempted: cancellation/known changes are not uncertain.
                 persist(prefs.edit().putBoolean("lock_write_pending", false)
                         .remove("lock_write_before").remove("lock_write_uncertain"));
                 throw changedBeforeWrite;
             }
             int id = WallpaperRenderer.setLockBitmap(context, bitmap);
+            // Do not interrupt an already-started system write or its ownership commit.
+            // If killed here, the persisted journal still protects the next process.
             persist(prefs.edit().putInt("lock_last_wallpaper_id", id)
                     .putBoolean("lock_has_glyph", kanji != null).putLong("lock_last_hour", hour)
                     .putLong("lock_last_success", System.currentTimeMillis())

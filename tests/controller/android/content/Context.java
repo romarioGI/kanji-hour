@@ -3,15 +3,16 @@ import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
-public final class Context {
+public class Context {
     public static final int MODE_PRIVATE = 0;
     public final Memory prefs = new Memory();
     private final File directory;
     public Context(File directory) { this.directory = directory; }
+    public Context getApplicationContext() { return this; }
     public File getFilesDir() { return directory; }
     public SharedPreferences getSharedPreferences(String name, int mode) { return prefs; }
     public static final class Memory implements SharedPreferences {
-        private final Map<String, Object> values = new HashMap<>();
+        private final Map<String, Object> values = java.util.Collections.synchronizedMap(new HashMap<>());
         public int commits, failAt = -1;
         public boolean getBoolean(String key, boolean value) { return (Boolean) values.getOrDefault(key, value); }
         public int getInt(String key, int value) { return (Integer) values.getOrDefault(key, value); }

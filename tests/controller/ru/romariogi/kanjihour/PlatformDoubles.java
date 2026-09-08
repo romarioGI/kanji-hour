@@ -8,6 +8,8 @@ import java.io.IOException;
 /** Deterministic platform failures around the actual production controller. */
 final class Kanji { }
 final class HourlyScheduler {
+    static final String ACTION_REFRESH = "ru.romariogi.kanjihour.action.REFRESH_HOUR";
+    static final long HOUR_MILLIS = 3600000L;
     static int calls;
     static void schedule(Context context) { calls++; }
 }
@@ -48,7 +50,7 @@ final class WallpaperRenderer {
     static int writes;
     static boolean failAfterInstall;
     static Bitmap last;
-    static Runnable onRender;
+    static Runnable onRender, onWrite;
     static Bitmap render(File file, Kanji kanji, int width, float y, float scale) {
         if (onRender != null) onRender.run();
         last = new Bitmap(kanji);
@@ -57,7 +59,16 @@ final class WallpaperRenderer {
     static int setLockBitmap(Context context, Bitmap bitmap) throws IOException {
         writes++;
         CurrentWallpaperImporter.currentId = 1000 + writes;
+        if (onWrite != null) onWrite.run();
         if (failAfterInstall) throw new IOException("interrupted after system write");
         return CurrentWallpaperImporter.currentId;
     }
+}
+
+final class KanjiRepository {
+    static Kanji getAtTime(Context context, long time) { return new Kanji(); }
+}
+final class KanjiWidgetProvider {
+    static int[] widgetIds(Context context) { return new int[0]; }
+    static void updateAll(Context context, Kanji kanji) { }
 }

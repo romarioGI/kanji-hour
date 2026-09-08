@@ -16,7 +16,7 @@ def main():
     output = ROOT / "build/tests"
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir(parents=True)
-    production = [SOURCE / (name + ".java") for name in ("HourlySelection", "WallpaperImportPolicy", "RefreshTask")]
+    production = [SOURCE / (name + ".java") for name in ("HourlySelection", "WallpaperImportPolicy", "RefreshTask", "RefreshCancellation")]
     run(["java", "-m", "jdk.compiler/com.sun.tools.javac.Main", "--release", "17", "-encoding", "UTF-8", "-d", output]
         + production + sorted((ROOT / "tests").glob("*.java")))
     for name in ("HourlySelectionTest", "WallpaperImportPolicyTest", "RefreshTaskTest"):
@@ -25,9 +25,10 @@ def main():
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir(parents=True)
     run(["java", "-m", "jdk.compiler/com.sun.tools.javac.Main", "--release", "17", "-encoding", "UTF-8", "-d", output]
-        + [SOURCE / (name + ".java") for name in ("Config", "LockWallpaperController", "WallpaperImportPolicy")]
+        + [SOURCE / (name + ".java") for name in ("Config", "LockWallpaperController", "WallpaperImportPolicy", "RefreshTask", "RefreshCancellation", "UpdateCoordinator", "RecoveryJobService")]
         + sorted((ROOT / "tests/controller").rglob("*.java")))
     run(["java", "-cp", output, "ru.romariogi.kanjihour.LockWallpaperControllerTest"])
+    run(["java", "-cp", output, "ru.romariogi.kanjihour.RecoveryJobCancellationTest"])
 
 
 if __name__ == "__main__":
