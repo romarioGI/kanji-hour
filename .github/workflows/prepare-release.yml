@@ -37,8 +37,28 @@ jobs:
             exit 1
           fi
 
-  build:
+  snapshot:
+    name: Cut candidate tag
     needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Pin the release cut without moving existing tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_refs.py
+
+  build:
+    needs: snapshot
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
