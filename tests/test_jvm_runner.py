@@ -49,19 +49,28 @@ class JvmRunnerTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("CONTROLLER_CANARY_FAILED", result.stderr)
 
+    def test_new_packaged_scheduler_failure_fails_runner(self):
+        self.add_test("scheduler/extra/ReviewCanaryTest.java",
+                      'throw new AssertionError("SCHEDULER_CANARY_FAILED");', "extra")
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("SCHEDULER_CANARY_FAILED", result.stderr)
+
     def test_java_assertions_are_enabled(self):
         self.add_test("AssertionCanaryTest.java", 'assert false : "ASSERTION_CANARY_FAILED";')
         result = self.execute()
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("ASSERTION_CANARY_FAILED", result.stderr)
 
-    def test_new_tests_run_once_in_both_groups(self):
+    def test_new_tests_run_once_in_all_groups(self):
         self.add_test("nested/ExtraTest.java", 'System.out.println("EXTRA_PLAIN_OK");', "nested")
         self.add_test("controller/extra/ExtraTest.java", 'System.out.println("EXTRA_CONTROLLER_OK");', "extra")
+        self.add_test("scheduler/extra/ExtraTest.java", 'System.out.println("EXTRA_SCHEDULER_OK");', "extra")
         result = self.execute()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count("EXTRA_PLAIN_OK"), 1)
         self.assertEqual(result.stdout.count("EXTRA_CONTROLLER_OK"), 1)
+        self.assertEqual(result.stdout.count("EXTRA_SCHEDULER_OK"), 1)
 
     def test_empty_group_is_an_error(self):
         spec = importlib.util.spec_from_file_location("jvm_runner", ROOT / "tools/test.py")

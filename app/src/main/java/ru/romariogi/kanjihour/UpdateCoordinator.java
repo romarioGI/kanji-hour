@@ -65,7 +65,8 @@ public final class UpdateCoordinator {
                                RefreshCancellation cancellation) {
         long received = System.currentTimeMillis(), started = SystemClock.elapsedRealtime();
         long expected = Config.prefs(app).getLong("next_update_at", 0);
-        RefreshTask.submit(EXECUTOR, () -> HourlyScheduler.schedule(app), () -> {
+        RefreshTask.submit(EXECUTOR,
+                () -> HourlyScheduler.schedule(app, HourlyScheduler.ACTION_REFRESH.equals(trigger)), () -> {
             Config.prefs(app).edit().putString("last_trigger", trigger).putLong("last_trigger_at", received)
                     .putLong("last_expected_at", expected).apply();
             if (HourlyScheduler.ACTION_REFRESH.equals(trigger))

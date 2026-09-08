@@ -12,6 +12,7 @@ final class HourlyScheduler {
     static final long HOUR_MILLIS = 3600000L;
     static int calls;
     static void schedule(Context context) { calls++; }
+    static void schedule(Context context, boolean alarmDelivered) { schedule(context); }
 }
 final class CurrentWallpaperImporter {
     static int currentId, reads, checks;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Discover and run all *Test.java mains; Android doubles use a separate classpath."""
+"""Discover and run all *Test.java mains; Android doubles use separate classpaths."""
 from pathlib import Path
 import re
 import shutil
@@ -11,6 +11,7 @@ SOURCE = ROOT / "app/src/main/java/ru/romariogi/kanjihour"
 PURE = ("HourlySelection", "WallpaperImportPolicy", "RefreshTask", "RefreshCancellation", "PreviewRequests")
 CONTROLLER = ("Config", "LockWallpaperController", "WallpaperImportPolicy", "RefreshTask",
               "RefreshCancellation", "UpdateCoordinator", "RecoveryJobService")
+SCHEDULER = ("Config", "HourlyScheduler", "RefreshTask", "RefreshCancellation", "UpdateCoordinator")
 
 
 def run(args):
@@ -48,10 +49,14 @@ def suite(output, production, sources):
 def main():
     tests = ROOT / "tests"
     sources = sorted(tests.rglob("*.java"))
-    plain = [path for path in sources if path.relative_to(tests).parts[0] != "controller"]
+    plain = [path for path in sources if path.relative_to(tests).parts[0] not in ("controller", "scheduler")]
     controller = sorted((tests / "controller").rglob("*.java"))
+    scheduler = sorted((tests / "scheduler").rglob("*.java"))
+    # Share only the preference API declaration, not either group's platform behavior.
+    scheduler.append(tests / "controller/android/content/SharedPreferences.java")
     suite(ROOT / "build/tests", PURE, plain)
     suite(ROOT / "build/controller-tests", CONTROLLER, controller)
+    suite(ROOT / "build/scheduler-tests", SCHEDULER, scheduler)
     return 0
 
 

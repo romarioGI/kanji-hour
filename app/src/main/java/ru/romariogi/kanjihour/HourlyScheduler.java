@@ -21,9 +21,10 @@ public final class HourlyScheduler {
     private HourlyScheduler() {}
 
     public static boolean hasExactPermission(Context context) {
-        AlarmManager manager = context.getSystemService(AlarmManager.class);
-        try { return manager != null && manager.canScheduleExactAlarms(); }
-        catch (RuntimeException unavailable) { return false; }
+        try {
+            AlarmManager manager = context.getSystemService(AlarmManager.class);
+            return manager != null && manager.canScheduleExactAlarms();
+        } catch (RuntimeException unavailable) { return false; }
     }
 
     public static long nextHour(long nowMillis) {
@@ -36,14 +37,28 @@ public final class HourlyScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    public static synchronized void schedule(Context context) {
+    public static void schedule(Context context) {
+        schedule(context, false);
+    }
+
+    /** Only delivery of ACTION_REFRESH consumes the previously armed hourly event. */
+    public static synchronized void schedule(Context context, boolean alarmDelivered) {
         Context app = context.getApplicationContext();
-        boolean needed = Config.prefs(app).getBoolean("lock_enabled", false)
-                || KanjiWidgetProvider.widgetIds(app).length > 0;
+        boolean needed = Config.prefs(app).getBoolean("lock_enabled", false);
+        if (!needed) {
+            try {
+                needed = KanjiWidgetProvider.widgetIds(app).length > 0;
+            } catch (RuntimeException launcherUnavailable) {
+                // Unknown is not disabled. Keep recovery until the launcher can be queried.
+                // In particular, a launcher outage must not block enabling lock wallpaper.
+                Log.w(TAG, "Widget state unavailable; preserving recovery", launcherUnavailable);
+                needed = true;
+            }
+        }
         // Independent of exact-alarm access and of whether a home widget exists.
         scheduleRecovery(app, needed);
-        AlarmManager manager = app.getSystemService(AlarmManager.class);
         try {
+            AlarmManager manager = app.getSystemService(AlarmManager.class);
             if (manager == null) throw new IllegalStateException("AlarmManager unavailable");
             PendingIntent pending = pendingIntent(app);
             if (!needed) {
@@ -53,6 +68,13 @@ public final class HourlyScheduler {
                 return;
             }
             long next = nextHour(System.currentTimeMillis());
+            long previous = Config.prefs(app).getLong("next_update_at", 0L);
+            if (!alarmDelivered && previous > 0L && previous < next) {
+                // Another trigger may later be cancelled or fail. Do not discard an
+                // undelivered event on its behalf. Re-arm it even if already overdue:
+                // preferences are a recovery hint, not proof that Android kept the alarm.
+                next = previous;
+            }
             boolean exact = hasExactPermission(app);
             if (exact) {
                 try { manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pending); }
