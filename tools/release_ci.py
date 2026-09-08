@@ -119,7 +119,9 @@ def verify_apk(sdk, apk, info):
     badging = run([tool(sdk, "aapt2"), "dump", "badging", apk], capture_output=True, text=True).stdout
     require(f"name='{PACKAGE}' versionCode='{info['version_code']}' versionName='{info['version_name']}'"
             in badging, "APK package/version mismatch")
-    require("sdkVersion:'34'" in badging and "targetSdkVersion:'34'" in badging, "Unexpected SDK levels")
+    require(re.search(r"^(?:minSdkVersion|sdkVersion):'34'$", badging, re.MULTILINE) is not None
+            and re.search(r"^targetSdkVersion:'34'$", badging, re.MULTILINE) is not None,
+            "Unexpected SDK levels")
     require("application-debuggable" not in badging, "Release APK is debuggable")
     from check import PERMISSIONS
     require(set(re.findall(r"uses-permission: name='([^']+)'", badging)) == PERMISSIONS,

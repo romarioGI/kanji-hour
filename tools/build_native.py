@@ -183,7 +183,8 @@ def build(sdk, output, check_only, unsigned_only=False, version_code=None):
             "-I", android_jar, "--java", work / "generated", "--min-sdk-version", "34",
             "--target-sdk-version", "34", "--auto-add-overlay", "-R", resources_zip]
     if version_code is not None:
-        link += ["--version-code", str(version_code)]
+        # AAPT2 otherwise preserves versionCode already present in the manifest.
+        link += ["--replace-version", "--version-code", str(version_code)]
     if (source / "assets").is_dir():
         link += ["-A", source / "assets"]
     run(link, "2/6 Linking Android package and generating R.java")
