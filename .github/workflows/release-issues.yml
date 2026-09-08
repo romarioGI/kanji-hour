@@ -1,0 +1,45 @@
+name: Release review issues
+
+'on':
+  workflow_run:
+    workflows: [Prepare release, Review release]
+    types: [completed]
+    branches: [trunk]
+  release:
+    types: [published]
+  workflow_dispatch:
+  push:
+    branches: [trunk]
+    paths:
+      - .github/workflows/release-issues.yml
+      - tools/release_issues.py
+
+permissions: {}
+
+concurrency:
+  group: release-review-issues
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/trunk'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      statuses: read
+      issues: write
+    steps:
+      # workflow_run can reference another branch; execute only trusted trunk code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: trunk
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Create current review issue and close superseded tasks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_issues.py
