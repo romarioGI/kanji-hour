@@ -49,7 +49,7 @@
 ## Разработка
 
 Java, Android SDK, без сторонних библиотек. Пакет `ru.romariogi.kanjihour`.
-Минимальный и целевой API — 34, compile SDK — 35. Версия исходников — `0.3.0-poco`.
+Минимальный и целевой API — 34, compile SDK — 35. Версия исходников — `0.3.1-poco`.
 
 ```sh
 python3 tools/test.py

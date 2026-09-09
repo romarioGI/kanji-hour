@@ -185,7 +185,7 @@ public final class MainActivity extends Activity {
         text(schedule, "Внутри часа знак остаётся тем же. Резервное задание восстанавливает обновления после сбоев; "
                 + "мгновенный запуск в фоне не гарантируется.", 12, MUTED, false);
         diagnostics = text(schedule, "", 11, MUTED, false);
-        text(content, "77 базовых кандзи · без интернета и рекламы · 0.3.0-poco", 12, MUTED, false);
+        text(content, "77 базовых кандзи · без интернета и рекламы · 0.3.1-poco", 12, MUTED, false);
         updateCard();
         updateLabels();
         updateStatuses();
