@@ -14,7 +14,7 @@
         android:layout_width="72dp"
         android:layout_height="wrap_content"
         android:fontFamily="sans-serif"
-        android:includeFontPadding="false"
+        android:includeFontPadding="true"
         android:gravity="center"
         android:singleLine="true"
         android:text="学"
